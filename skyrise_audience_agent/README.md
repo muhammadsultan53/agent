@@ -1,15 +1,32 @@
 # Skyrise Audience Generation Agent
 
-An intelligent agent that converts natural language prompts into SQL queries for audience creation from Skyrise transaction data.
+An intelligent conversational agent that converts natural language prompts into SQL queries for audience creation from Skyrise transaction data.
+
+## 🚀 Quick Start
+
+**Run the Conversational Agent (Recommended)**:
+```bash
+python run_agent.py
+```
+
+The agent will guide you step-by-step through building audiences!
+
+**Or use the Quick CLI**:
+```bash
+python interactive_cli.py
+```
 
 ## Features
 
-✨ **Natural Language Processing**: Describe your audience in plain English
+✨ **Conversational Interface**: Step-by-step guided audience building
+🗣️ **Natural Language Processing**: Describe your audience in plain English
 🤖 **Interactive Clarification**: Agent asks follow-up questions for missing filters
 🎯 **Multiple Audience Types**: Support for demographic, behavioral, geographic, and lookalike audiences
+🔗 **Audience Combining**: Merge audiences with AND/OR/NOT logic
 📊 **Smart Query Generation**: Automatically generates optimized BigQuery SQL
 🔍 **Filter Validation**: Ensures all filters match valid schema values
 💾 **Export Ready**: Generates queries for counting and exporting audiences with demographics
+📚 **Built-in Help**: Examples, tips, and tutorials included
 
 ## Supported Audience Types
 

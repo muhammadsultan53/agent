@@ -11,9 +11,24 @@ cd skyrise_audience_agent
 pip install -r requirements.txt
 ```
 
-## Quick Examples
+## Quick Start
 
-### Interactive Mode (Recommended)
+### Method 1: Conversational Agent (★ Recommended for Beginners)
+
+```bash
+python run_agent.py
+```
+
+The agent will:
+- 🎯 Guide you step-by-step through building audiences
+- 💡 Explain what filters are available
+- 📚 Show examples and provide help
+- 🔗 Let you combine audiences with AND/OR/NOT
+- 💾 Save your queries to files
+
+**Perfect for: Learning, exploring, and complex combinations**
+
+### Method 2: Quick CLI (For Experienced Users)
 
 ```bash
 python interactive_cli.py
@@ -29,6 +44,8 @@ Then you can type natural language prompts like:
 ```
 💬 Describe your audience: Find female users aged 25-34 in the US with high income
 ```
+
+**Perfect for: Quick builds when you know exactly what you want**
 
 The agent will generate SQL queries for you!
 
