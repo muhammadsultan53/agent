@@ -8,16 +8,25 @@ from typing import Dict, List, Any, Optional
 from audience_agent import AudienceAgent
 from query_builder import QueryBuilder
 from schema_config import VALID_FILTERS, COMMON_MERCHANTS, COMMON_GROCERS
+from bigquery_executor import BigQueryExecutor, format_dataframe, format_stats
 
 
 class ConversationalAgent:
     """
     Interactive conversational agent that guides users through audience creation
+    AND EXECUTES QUERIES to show real results
     """
 
-    def __init__(self, project_id: str = None, dataset: str = None, release_id: int = None):
+    def __init__(self, project_id: str = None, dataset: str = None, release_id: int = None,
+                 execute_queries: bool = True, credentials_path: str = None):
         self.agent = AudienceAgent(project_id, dataset, release_id)
         self.query_builder = QueryBuilder(project_id, dataset, release_id)
+
+        # BigQuery executor for running actual queries
+        self.execute_queries = execute_queries
+        self.executor = None
+        if execute_queries and project_id:
+            self.executor = BigQueryExecutor(project_id, credentials_path)
 
         # Conversation state
         self.state = "welcome"  # welcome, main_menu, building, combining, reviewing, help
@@ -320,7 +329,7 @@ Please choose from: {', '.join(current_q['options'][:5])}
                 return f"❌ Error building query: {str(e)}\n\nType 'menu' to start over."
 
     def _format_success_result(self, result: Dict[str, Any]) -> str:
-        """Format successful query generation"""
+        """Format successful query generation AND EXECUTE IT to show real results"""
         output = ["""
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║                     ✓ AUDIENCE CREATED SUCCESSFULLY!                    ║
@@ -338,17 +347,66 @@ Please choose from: {', '.join(current_q['options'][:5])}
         else:
             output.append("   • No additional filters")
 
-        # Show query
-        output.append("\n" + "─" * 76)
-        output.append("📝 Generated SQL Query:")
-        output.append("─" * 76)
-        output.append(result["query"])
+        # EXECUTE THE QUERY AND SHOW REAL RESULTS
+        if self.executor and self.executor.is_connected():
+            output.append("\n" + "═" * 76)
+            output.append("🚀 EXECUTING QUERY IN BIGQUERY...")
+            output.append("═" * 76)
 
-        # Show count query
-        output.append("\n" + "─" * 76)
-        output.append("📊 To Get Audience Size:")
-        output.append("─" * 76)
-        output.append(result["count_query"])
+            try:
+                # Get audience count
+                output.append("\n⏳ Getting audience size...")
+                count_result = self.executor.get_audience_count(result["query"])
+
+                if count_result["status"] == "success":
+                    output.append(f"\n✓ AUDIENCE SIZE: {count_result['formatted']} users")
+
+                    # Only get sample and stats if audience is not empty
+                    if count_result["count"] > 0:
+                        # Get sample users
+                        output.append("\n⏳ Getting sample users...")
+                        sample_result = self.executor.get_audience_sample(result["query"], sample_size=10)
+
+                        if sample_result["status"] == "success":
+                            output.append("\n" + "─" * 76)
+                            output.append("👥 SAMPLE USERS (first 10):")
+                            output.append("─" * 76)
+                            output.append(format_dataframe(sample_result["data"], max_rows=10))
+
+                        # Get demographic breakdown
+                        output.append("\n⏳ Analyzing demographics...")
+                        stats_result = self.executor.get_audience_stats(result["query"])
+
+                        if stats_result["status"] == "success":
+                            output.append("\n" + "═" * 76)
+                            output.append("📊 AUDIENCE DEMOGRAPHICS")
+                            output.append("═" * 76)
+                            output.append(format_stats(stats_result))
+
+                    else:
+                        output.append("\n⚠️  Audience is empty - no users match these criteria")
+
+                else:
+                    output.append(f"\n❌ Error getting count: {count_result.get('message', 'Unknown error')}")
+
+            except Exception as e:
+                output.append(f"\n❌ Error executing query: {str(e)}")
+                output.append("\nQuery generated but execution failed. Check your credentials.")
+
+        else:
+            # Not connected to BigQuery - just show the query
+            output.append("\n" + "─" * 76)
+            output.append("📝 Generated SQL Query:")
+            output.append("─" * 76)
+            output.append(result["query"])
+
+            output.append("\n" + "─" * 76)
+            output.append("📊 To Get Audience Size:")
+            output.append("─" * 76)
+            output.append(result["count_query"])
+
+            output.append("\n⚠️  BigQuery not connected - showing SQL only")
+            output.append("To execute queries, provide valid BigQuery credentials")
 
         # Save audience
         audience_name = f"Audience_{len(self.current_audiences) + 1}"
@@ -369,9 +427,10 @@ Please choose from: {', '.join(current_q['options'][:5])}
 What would you like to do next?
 
 1) Save queries to file
-2) Build another audience
-3) Combine this with another audience
-4) Return to main menu
+2) Export audience to CSV
+3) Build another audience
+4) Combine this with another audience
+5) Return to main menu
 
 💬 Your choice:""")
 
@@ -384,10 +443,12 @@ What would you like to do next?
 
         if choice in ["1", "save"]:
             return self._save_queries_to_file()
-        elif choice in ["2", "build another", "new"]:
+        elif choice in ["2", "export", "export csv"]:
+            return self._export_audience_to_csv()
+        elif choice in ["3", "build another", "new"]:
             self.state = "main_menu"
             return self._get_main_menu()
-        elif choice in ["3", "combine"]:
+        elif choice in ["4", "combine"]:
             if len(self.current_audiences) < 2:
                 return """
 ⚠️  You need at least one more audience to combine.
@@ -397,11 +458,11 @@ Let's build another one first!
 Type 'menu' to go back."""
             self.state = "combining"
             return self._start_combining_flow()
-        elif choice in ["4", "menu", "main menu"]:
+        elif choice in ["5", "menu", "main menu"]:
             self.state = "main_menu"
             return self._get_main_menu()
         else:
-            return "Please choose 1-4, or type 'menu' for main menu."
+            return "Please choose 1-5, or type 'menu' for main menu."
 
     def _start_combining_flow(self) -> str:
         """Start the audience combining flow"""
@@ -565,6 +626,44 @@ Type 'menu' to continue."""
 
         except Exception as e:
             return f"❌ Error saving file: {str(e)}"
+
+    def _export_audience_to_csv(self) -> str:
+        """Export the latest audience to CSV file"""
+        if not self.current_audiences:
+            return "No audiences to export."
+
+        if not self.executor or not self.executor.is_connected():
+            return """
+❌ BigQuery not connected - cannot export audience data.
+
+To export audiences, you need valid BigQuery credentials.
+Type 'menu' to continue."""
+
+        # Get latest audience
+        latest = self.current_audiences[-1]
+        filename = f"{latest['name']}_export.csv"
+
+        try:
+            output = [f"\n🚀 Exporting {latest['name']} to {filename}..."]
+
+            # Use the export query which includes demographics
+            result = self.executor.export_audience(
+                latest['export_query'],
+                filename,
+                format='csv'
+            )
+
+            if result["status"] == "success":
+                output.append(f"\n✓ {result['message']}")
+                output.append(f"\nFile: {result['file']}")
+                output.append(f"Rows: {result['rows_exported']:,}")
+                output.append("\nType 'menu' to continue.")
+                return "\n".join(output)
+            else:
+                return f"\n❌ Export failed: {result.get('message', 'Unknown error')}\n\nType 'menu' to continue."
+
+        except Exception as e:
+            return f"❌ Error exporting: {str(e)}\n\nType 'menu' to continue."
 
     def _get_examples(self) -> str:
         """Get example prompts"""

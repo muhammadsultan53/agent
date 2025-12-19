@@ -55,11 +55,32 @@ Welcome! Let's get you set up...
             print("⚠️  Invalid release ID, using default: 1")
             release_id = 1
 
+    # Ask about query execution
+    print("\n" + "━" * 76)
+    print("                     BIGQUERY EXECUTION")
+    print("━" * 76)
+    print("\nDo you want to EXECUTE queries in BigQuery and see REAL results?")
+    print("(This requires valid BigQuery credentials)")
+    print("\nOptions:")
+    print("  1) Yes - Execute queries and show real audience counts/data")
+    print("  2) No - Just generate SQL queries (no execution)")
+
+    exec_choice = input("\n💬 Your choice [1]: ").strip()
+    execute_queries = exec_choice != "2"
+
+    credentials_path = None
+    if execute_queries:
+        creds_input = input("\n🔑 Path to service account JSON (or press Enter to use default credentials): ").strip()
+        if creds_input:
+            credentials_path = creds_input
+
     print(f"""
 ✓ Configuration saved:
   Project: {project_id}
   Dataset: {dataset}
   Release: {release_id}
+  Execute Queries: {'Yes' if execute_queries else 'No'}
+  Credentials: {credentials_path if credentials_path else 'Default'}
 """)
 
     input("Press Enter to start the agent...")
@@ -70,7 +91,9 @@ Welcome! Let's get you set up...
         agent = ConversationalAgent(
             project_id=project_id,
             dataset=dataset,
-            release_id=release_id
+            release_id=release_id,
+            execute_queries=execute_queries,
+            credentials_path=credentials_path
         )
     except Exception as e:
         print(f"❌ Error initializing agent: {str(e)}")
