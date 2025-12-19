@@ -9,6 +9,7 @@ from audience_agent import AudienceAgent
 from query_builder import QueryBuilder
 from schema_config import VALID_FILTERS, COMMON_MERCHANTS, COMMON_GROCERS
 from bigquery_executor import BigQueryExecutor, format_dataframe, format_stats
+from enhanced_nlp import EnhancedNLPParser
 
 
 class ConversationalAgent:
@@ -21,6 +22,7 @@ class ConversationalAgent:
                  execute_queries: bool = True, credentials_path: str = None):
         self.agent = AudienceAgent(project_id, dataset, release_id)
         self.query_builder = QueryBuilder(project_id, dataset, release_id)
+        self.enhanced_nlp = EnhancedNLPParser()  # Enhanced NLP for complex requests
 
         # BigQuery executor for running actual queries
         self.execute_queries = execute_queries
@@ -209,7 +211,46 @@ STEP 1: Choose Audience Type
 💬 Which type would you like? (1-6):"""
 
     def _handle_audience_building(self, user_input: str) -> str:
-        """Handle audience building from natural language"""
+        """Handle audience building from natural language - WITH ENHANCED NLP"""
+
+        # First, try enhanced NLP for complex requests
+        parsed = self.enhanced_nlp.parse_complex_request(user_input)
+
+        # If it's a complex request (multiple vendors, etc.), handle it automatically
+        if parsed["complexity"] != "simple":
+            print(f"\n🧠 Detected complex request: {parsed['complexity']}")
+            print(f"📋 Vendors: {parsed['vendors']}")
+            print(f"🎯 Age filters: {parsed['age_filters']}")
+            print(f"🔗 Combine logic: {parsed['combine_logic']}")
+
+            try:
+                # Build query from parsed data
+                query_info = self.enhanced_nlp.build_query_from_parsed(parsed, self.query_builder)
+
+                if query_info:
+                    # Create result object
+                    result = {
+                        "status": "success",
+                        "query": query_info["query"],
+                        "audience_type": f"combined_{parsed['combine_logic'].lower()}",
+                        "filters": {
+                            "vendors": query_info["vendors"],
+                            "combine_logic": query_info["combine_logic"],
+                            **parsed.get("demographics", {}),
+                            **parsed.get("location", {}),
+                            **parsed.get("age_filters", {})
+                        },
+                        "count_query": self.query_builder.get_audience_count(query_info["query"]),
+                        "export_query": self.query_builder.get_audience_export(query_info["query"])
+                    }
+
+                    return self._format_success_result(result)
+
+            except Exception as e:
+                print(f"\n⚠️  Enhanced NLP failed: {str(e)}")
+                print("Falling back to standard parser...")
+
+        # Fall back to standard parser
         result = self.agent.process_prompt(user_input)
 
         if result["status"] == "needs_clarification":
