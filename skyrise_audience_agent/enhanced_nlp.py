@@ -181,41 +181,95 @@ class EnhancedNLPParser:
 
         return demographics
 
-    def _extract_location(self, prompt_lower: str) -> Dict[str, str]:
-        """Extract location filters"""
+    def _extract_location(self, prompt_lower: str) -> Dict[str, Any]:
+        """Extract location filters - supports multiple countries"""
         location = {}
+        countries = []
 
-        # Country codes
+        # Country codes with word boundaries
         country_patterns = [
             (r'\buk\b|\bbritain\b|\bengland\b', "GB"),
             (r'\bus\b|\busa\b|\bunited states\b|\bamerica\b', "US"),
-            (r'\bcanada\b', "CA"),
-            (r'\baustralia\b', "AU"),
+            (r'\bcanada\b|\bcanadian\b', "CA"),
+            (r'\baustralia\b|\baustralian\b', "AU"),
+            (r'\bgermany\b|\bgerman\b', "DE"),
+            (r'\bfrance\b|\bfrench\b', "FR"),
+            (r'\bspain\b|\bspanish\b', "ES"),
+            (r'\bitaly\b|\bitalian\b|\bit\b', "IT"),
         ]
 
+        # Extract all mentioned countries
         for pattern, code in country_patterns:
             if re.search(pattern, prompt_lower):
-                location["country"] = code
-                break
+                if code not in countries:
+                    countries.append(code)
 
-        # Specific locations
-        if "based in" in prompt_lower or "in the" in prompt_lower or "from" in prompt_lower:
-            # Already handled by country patterns
-            pass
+        if countries:
+            if len(countries) == 1:
+                location["country"] = countries[0]
+            else:
+                location["countries"] = countries  # Multiple countries
+                location["multi_country"] = True
 
         return location
 
     def build_query_from_parsed(self, parsed: Dict[str, Any], query_builder) -> Dict[str, Any]:
         """
         Build query from parsed complex request
+        Handles: multi-vendor, multi-country, combinations
 
         Returns query info with automatic combining if needed
         """
         if parsed["complexity"] == "simple":
             return None  # Use standard flow
 
-        # Multi-vendor case
-        if len(parsed["vendors"]) > 1:
+        # Get countries list
+        countries = []
+        if parsed["location"].get("multi_country"):
+            countries = parsed["location"]["countries"]
+        elif parsed["location"].get("country"):
+            countries = [parsed["location"]["country"]]
+
+        # CASE 1: Multi-country (with or without vendors)
+        if len(countries) > 1:
+            country_queries = []
+
+            for country in countries:
+                if parsed["vendors"]:
+                    # Multi-vendor in this country
+                    if len(parsed["vendors"]) > 1:
+                        vendor_queries = []
+                        for vendor in parsed["vendors"]:
+                            filters = {
+                                "vendor_desc": vendor,
+                                "user_ccode2": [country]
+                            }
+                            vendor_queries.append(query_builder.build_vendor_audience(filters))
+
+                        # Combine vendors within this country
+                        if parsed["combine_logic"] == "AND":
+                            country_query = query_builder.build_combined_audience(vendor_queries, "INTERSECT")
+                        else:
+                            country_query = query_builder.build_combined_audience(vendor_queries, "UNION")
+
+                        country_queries.append(country_query)
+                    else:
+                        # Single vendor in this country
+                        filters = {
+                            "vendor_desc": parsed["vendors"][0],
+                            "user_ccode2": [country]
+                        }
+                        country_queries.append(query_builder.build_vendor_audience(filters))
+                else:
+                    # No vendors, just demographic in this country
+                    filters = {"user_ccode2": [country]}
+                    country_queries.append(query_builder.build_demographic_audience(filters))
+
+            # Combine all countries with UNION (users from any country)
+            combined = query_builder.build_combined_audience(country_queries, "UNION")
+
+        # CASE 2: Multi-vendor, single country
+        elif len(parsed["vendors"]) > 1:
             queries = []
 
             for vendor in parsed["vendors"]:
@@ -223,8 +277,8 @@ class EnhancedNLPParser:
                 filters = {"vendor_desc": vendor}
 
                 # Add location if specified
-                if parsed["location"].get("country"):
-                    filters["user_ccode2"] = [parsed["location"]["country"]]
+                if countries:
+                    filters["user_ccode2"] = countries
 
                 query = query_builder.build_vendor_audience(filters)
                 queries.append(query)
@@ -235,22 +289,25 @@ class EnhancedNLPParser:
             else:
                 combined = query_builder.build_combined_audience(queries, "UNION")
 
-            # Add demographic filters if needed
-            if parsed["age_filters"].get("bands"):
-                combined = query_builder.add_demographic_refinement(combined, {
-                    "age_band": parsed["age_filters"]["bands"]
-                })
+        else:
+            # Single vendor, single country (shouldn't reach here, but fallback)
+            return None
 
-            if parsed["demographics"].get("gender"):
-                combined = query_builder.add_demographic_refinement(combined, {
-                    "gender_description": [parsed["demographics"]["gender"]]
-                })
+        # Add demographic filters if needed
+        if parsed["age_filters"].get("bands"):
+            combined = query_builder.add_demographic_refinement(combined, {
+                "age_band": parsed["age_filters"]["bands"]
+            })
 
-            return {
-                "query": combined,
-                "vendors": parsed["vendors"],
-                "combine_logic": parsed["combine_logic"],
-                "filters": parsed
-            }
+        if parsed["demographics"].get("gender"):
+            combined = query_builder.add_demographic_refinement(combined, {
+                "gender_description": [parsed["demographics"]["gender"]]
+            })
 
-        return None
+        return {
+            "query": combined,
+            "vendors": parsed["vendors"],
+            "countries": countries,
+            "combine_logic": parsed["combine_logic"],
+            "filters": parsed
+        }
